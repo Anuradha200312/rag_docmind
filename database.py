@@ -165,11 +165,12 @@ class DocumentChunk(Base):
 # ─────────────────────────────────────────────────────────────────
 
 def init_db():
-    """Initializes database and tables synchronously."""
+    """Initializes database and tables synchronously, falling back to SQLite if PostgreSQL is unavailable."""
+    global engine
     from urllib.parse import urlparse
     import psycopg2
     
-    # Pre-creation check of database
+    use_sqlite = False
     try:
         result = urlparse(SYNC_DATABASE_URL)
         dbname = result.path.lstrip('/')
@@ -180,7 +181,8 @@ def init_db():
             port=result.port or 5432,
             user=result.username or 'postgres',
             password=result.password or '',
-            database='postgres'
+            database='postgres',
+            connect_timeout=3
         )
         conn.autocommit = True
         cur = conn.cursor()
@@ -192,7 +194,15 @@ def init_db():
             print(f"Created database: {dbname}")
         conn.close()
     except Exception as e:
-        print(f"Database pre-creation check skipped / failed: {e}")
+        print(f"PostgreSQL connection failed: {e}. Falling back to local SQLite database.")
+        use_sqlite = True
+
+    if use_sqlite or "sqlite" in SYNC_DATABASE_URL.lower():
+        engine = create_engine(
+            "sqlite:///docmind.db",
+            connect_args={"check_same_thread": False}
+        )
+        SessionLocal.configure(bind=engine)
 
     # Create tables
     Base.metadata.create_all(bind=engine)
