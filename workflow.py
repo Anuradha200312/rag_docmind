@@ -159,16 +159,20 @@ def retrieve_context_node(state: QueryState) -> Dict[str, Any]:
         if results and results[0].get("distance", 0) > SIMILARITY_THRESHOLD:
             retrieved_chunks = []
     else:
-        results = qdrant_search(doc_info["qdrant_collection"], question, top_k=5)
+        # Detect broad summary queries and increase top_k
+        is_summary = any(w in question.lower() for w in ["summarize", "summary", "overview", "key sections"])
+        top_k = 10 if is_summary else 5
+        results = qdrant_search(doc_info["qdrant_collection"], question, top_k=top_k)
         retrieved_chunks = results
         
     if not retrieved_chunks:
         context = ""
     else:
         context_parts = []
-        for idx, chunk in enumerate(retrieved_chunks, 1):
-            page_ref = f"[Page {chunk['page_number']}]" if chunk.get('page_number') else ""
-            context_parts.append(f"--- Chunk {idx} {page_ref} ---\n{chunk['chunk_text']}")
+        for chunk in retrieved_chunks:
+            page_num = chunk.get('page_number')
+            header = f"[Page {page_num}]\n" if page_num else ""
+            context_parts.append(f"{header}{chunk['chunk_text']}")
         context = "\n\n".join(context_parts)
         
     return {
@@ -207,10 +211,11 @@ def generate_llm_response_node(state: QueryState) -> Dict[str, Any]:
     messages = [
         SystemMessage(
             content=(
-                "You are a precise AI assistant. Answer questions ONLY based on the "
-                "document context provided. If the answer is not in the context, say "
-                "'I don't have that information in this document.' "
-                "Do NOT fabricate facts. Be concise and accurate. Cite page numbers where available."
+                "You are a precise AI assistant. Answer questions based ONLY on the document context provided. \n"
+                "When asked to summarize, write a flowing, well-structured response organized by topic — \n"
+                "do NOT label or list chunks. Synthesize the information naturally. \n"
+                "If the answer is not in the context, say 'I don't have that information in this document.' \n"
+                "Do NOT fabricate facts. Cite page numbers inline where available."
             )
         ),
         *langchain_history,
