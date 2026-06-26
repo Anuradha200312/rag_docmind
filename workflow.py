@@ -44,7 +44,12 @@ def route_pipeline_node(state: IngestionState) -> Dict[str, Any]:
     try:
         full_text = "\n\n".join(p.text for p in state["pages"])
         token_count = count_tokens(full_text)
-        pipeline_used = "direct" if token_count <= 20000 else "rag"
+        q_url = os.getenv("QDRANT_URL", "")
+        q_key = os.getenv("QDRANT_API_KEY", "")
+        if token_count <= 20000 or not q_url or not q_key:
+            pipeline_used = "direct"
+        else:
+            pipeline_used = "rag"
         return {
             "token_count": token_count,
             "pipeline_used": pipeline_used
