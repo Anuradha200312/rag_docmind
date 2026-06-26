@@ -148,6 +148,12 @@ def retrieve_context_node(state: QueryState) -> Dict[str, Any]:
     chat_id = state["chat_id"]
     question = state["question"]
     
+    try:
+        import streamlit as st
+        st.info(f"🔍 DEBUG: pipeline={doc_info.get('pipeline_used')}, collection={doc_info.get('qdrant_collection')}")
+    except Exception:
+        pass
+        
     retrieved_chunks = []
     
     if doc_info["pipeline_used"] == "direct":
