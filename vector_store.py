@@ -69,7 +69,7 @@ def _get_qdrant_client() -> QdrantClient:
         raise ValueError("QDRANT_URL and QDRANT_API_KEY must be defined in your environment variables for Qdrant Cloud.")
 
     logger.info("Connecting to Qdrant Cloud at %s", qdrant_url)
-    return QdrantClient(url=qdrant_url, api_key=qdrant_api_key, check_compatibility=False)
+    return QdrantClient(url=qdrant_url, api_key=qdrant_api_key, check_compatibility=False, timeout=60.0)
 
 def get_qdrant_collection_name(user_id: str, chat_id: str, filename: str) -> str:
     """
