@@ -647,6 +647,7 @@ def render_main():
                     })
                     response_stream = state["response_stream"]
                     sources = state.get("retrieved_chunks") or []
+                    st.info(f"🔍 DEBUG: pipeline={doc_info.get('pipeline_used')}, collection={doc_info.get('qdrant_collection')}, retrieved={len(sources)}")
                 except Exception as e:
                     st.error(f"❌ Error invoking query graph: {e}")
                     st.stop()
