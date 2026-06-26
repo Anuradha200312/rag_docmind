@@ -42,7 +42,7 @@ load_dotenv()
 try:
     init_db()
 except Exception as e:
-    st.warning(f"Database initialization warning (PostgreSQL might not be running): {e}")
+    st.warning(f"Database initialization warning: {e}")
 
 # ─────────────────────────────────────────────────────────────────
 # Page Config & Theme Styling

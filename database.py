@@ -206,6 +206,7 @@ def init_db():
 
     # Create tables
     Base.metadata.create_all(bind=engine)
+    return use_sqlite or "sqlite" in SYNC_DATABASE_URL.lower()
 
 def db_register_user(name: str, email: str, password_plain: str) -> dict | None:
     """Registers a new user synchronously."""
