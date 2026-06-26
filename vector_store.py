@@ -47,6 +47,11 @@ def get_sentence_embeddings(texts: list[str]) -> list[list[float]]:
         return [vec.tolist() for vec in vectors]
     except Exception as e:
         logger.error("Failed to generate sentence embeddings: %s", e)
+        try:
+            import streamlit as st
+            st.warning(f"⚠️ Embedding generation error: {e}")
+        except Exception:
+            pass
         # Return zero vectors fallback
         return [[0.0] * EMBEDDING_DIMENSION for _ in texts]
 
@@ -171,6 +176,11 @@ def qdrant_search(collection_name: str, query_text: str, top_k: int = 5) -> list
         ]
     except Exception as e:
         logger.error("Qdrant search error for collection %s: %s", collection_name, e)
+        try:
+            import streamlit as st
+            st.warning(f"⚠️ Qdrant search error for collection {collection_name}: {e}")
+        except Exception:
+            pass
         return []
 
 def qdrant_delete_collection(chat_id: str) -> None:
