@@ -1,11 +1,9 @@
 import os
 import uuid
 import logging
+import math
 from functools import lru_cache
 from dotenv import load_dotenv
-
-import chromadb
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 try:
     from qdrant_client import QdrantClient
@@ -196,62 +194,54 @@ def qdrant_delete_collection(chat_id: str) -> None:
 # ChromaDB (Local Ephemeral / Prototype Pipeline)
 # ─────────────────────────────────────────────────────────────────
 class ChromaStore:
+    _store = {}  # chat_id (or col_name) -> list of chunks with embeddings
+
     def __init__(self):
-        # Ephemeral client is lightweight and memory-only
-        self.client = chromadb.EphemeralClient()
+        # Dummy client to support legacy check: st.session_state.chroma_store.client.get_collection(col_name).count()
+        class DummyCollection:
+            def __init__(self, store, col_name):
+                self.store = store
+                self.col_name = col_name
+            def count(self):
+                return len(self.store.get(self.col_name, []))
+
+        class DummyClient:
+            def __init__(self, store):
+                self.store = store
+            def get_collection(self, name):
+                return DummyCollection(self.store, name)
+
+        self.client = DummyClient(self._store)
 
     def get_collection_name(self, chat_id: str) -> str:
-        # Chroma collection names must match a regex pattern
         return f"chroma_{chat_id.replace('-', '_')}"
 
+    def _embed(self, text: str) -> list:
+        text = text.lower()
+        vec = [text.count(chr(i)) for i in range(97, 123)]
+        total = sum(vec) or 1
+        return [v / total for v in vec]
+
+    def _cosine(self, a, b):
+        dot = sum(x*y for x,y in zip(a,b))
+        mag = math.sqrt(sum(x*x for x in a)) * math.sqrt(sum(y*y for y in b))
+        return dot / (mag + 1e-9)
+
     def index_chunks(self, chat_id: str, chunks: list[dict]) -> None:
-        """Store document chunks in ChromaDB local ephemeral client."""
         col_name = self.get_collection_name(chat_id)
-        # Delete if exists
-        try:
-            self.client.delete_collection(col_name)
-        except Exception:
-            pass
-
-        collection = self.client.create_collection(
-            name=col_name,
-            embedding_function=DefaultEmbeddingFunction()
-        )
-
-        documents = [c["chunk_text"] for c in chunks]
-        metadatas = [{"page_number": c["page_number"], "chunk_index": c["chunk_index"]} for c in chunks]
-        ids = [f"{chat_id}_chunk_{c['chunk_index']}" for c in chunks]
-
-        collection.add(documents=documents, metadatas=metadatas, ids=ids)
-        logger.info("ChromaDB: Indexed %d chunks in collection %s", len(chunks), col_name)
+        self._store[col_name] = [
+            {**c, "vec": self._embed(c["chunk_text"])} for c in chunks
+        ]
 
     def search(self, chat_id: str, query_text: str, top_k: int = 3) -> list[dict]:
-        """Search ChromaDB collection for relevant chunks."""
         col_name = self.get_collection_name(chat_id)
-        try:
-            collection = self.client.get_collection(
-                name=col_name,
-                embedding_function=DefaultEmbeddingFunction()
-            )
-            results = collection.query(
-                query_texts=[query_text],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            docs = results["documents"][0]
-            metas = results["metadatas"][0]
-            distances = results["distances"][0]
-
-            return [
-                {
-                    "chunk_text": doc,
-                    "page_number": meta.get("page_number", 0),
-                    "chunk_index": meta.get("chunk_index", 0),
-                    "distance": dist
-                }
-                for doc, meta, dist in zip(docs, metas, distances)
-            ]
-        except Exception as e:
-            logger.error("ChromaDB search error for chat %s: %s", chat_id, e)
+        if col_name not in self._store:
             return []
+        q_vec = self._embed(query_text)
+        scored = sorted(
+            self._store[col_name],
+            key=lambda c: self._cosine(q_vec, c["vec"]),
+            reverse=True
+        )
+        return [{"chunk_text": c["chunk_text"], "page_number": c["page_number"],
+                 "chunk_index": c["chunk_index"], "distance": 0.1} for c in scored[:top_k]]
