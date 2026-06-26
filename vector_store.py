@@ -159,12 +159,12 @@ def qdrant_search(collection_name: str, query_text: str, top_k: int = 5) -> list
     query_vector = get_single_embedding(query_text)
 
     try:
-        results = client.search(
+        results = client.query_points(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=top_k,
             with_payload=True
-        )
+        ).points
         return [
             {
                 "chunk_text": r.payload.get("chunk_text", ""),
