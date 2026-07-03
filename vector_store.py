@@ -207,8 +207,9 @@ def qdrant_delete_collection(chat_id: str) -> None:
 class ChromaStore:
     def __init__(self):
         import chromadb
-        # Store persistent database in workspace folder
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".chromadb")
+        import tempfile
+        # Store persistent database in system temp directory to prevent read-only directory failures in cloud environments
+        db_path = os.path.join(tempfile.gettempdir(), "docmind_chromadb")
         self.client = chromadb.PersistentClient(path=db_path)
 
     def get_collection_name(self, chat_id: str) -> str:
