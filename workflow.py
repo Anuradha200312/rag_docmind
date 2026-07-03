@@ -162,13 +162,9 @@ def retrieve_context_node(state: QueryState) -> Dict[str, Any]:
     retrieved_chunks = []
     
     if doc_info["pipeline_used"] == "direct":
-        chroma_store = ChromaStore()
-        results = chroma_store.search(chat_id, question, top_k=RAG_TOP_K)
+        from database import db_get_document_chunks
+        results = db_get_document_chunks(doc_info["document_id"])
         retrieved_chunks = results
-        
-        SIMILARITY_THRESHOLD = 2.0
-        if results and results[0].get("distance", 0) > SIMILARITY_THRESHOLD:
-            retrieved_chunks = []
     else:
         # Detect broad summary queries and increase top_k
         is_summary = any(w in question.lower() for w in ["summarize", "summary", "overview", "key sections"])
