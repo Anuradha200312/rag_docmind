@@ -187,10 +187,11 @@ def init_db():
         conn.autocommit = True
         cur = conn.cursor()
         
-        # Check database
-        cur.execute(f"SELECT 1 FROM pg_database WHERE datname = '{dbname}'")
+        # Check database securely
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
         if not cur.fetchone():
-            cur.execute(f"CREATE DATABASE {dbname}")
+            from psycopg2.sql import Identifier, SQL
+            cur.execute(SQL("CREATE DATABASE {}").format(Identifier(dbname)))
             print(f"Created database: {dbname}")
         conn.close()
     except Exception as e:

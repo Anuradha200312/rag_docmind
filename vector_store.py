@@ -135,8 +135,9 @@ def qdrant_upsert_chunks(
 
     points = []
     for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-        # Safe 64-bit int ID generator
-        point_id = abs(hash(f"{chat_id}_{idx}")) % (2**63)
+        # Use UUIDv5 for deterministic string UUID generation (stable across process restarts)
+        import uuid
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{chat_id}_{idx}"))
         points.append(
             qmodels.PointStruct(
                 id=point_id,
@@ -204,54 +205,60 @@ def qdrant_delete_collection(chat_id: str) -> None:
 # ChromaDB (Local Ephemeral / Prototype Pipeline)
 # ─────────────────────────────────────────────────────────────────
 class ChromaStore:
-    _store = {}  # chat_id (or col_name) -> list of chunks with embeddings
-
     def __init__(self):
-        # Dummy client to support legacy check: st.session_state.chroma_store.client.get_collection(col_name).count()
-        class DummyCollection:
-            def __init__(self, store, col_name):
-                self.store = store
-                self.col_name = col_name
-            def count(self):
-                return len(self.store.get(self.col_name, []))
-
-        class DummyClient:
-            def __init__(self, store):
-                self.store = store
-            def get_collection(self, name):
-                return DummyCollection(self.store, name)
-
-        self.client = DummyClient(self._store)
+        import chromadb
+        # Store persistent database in workspace folder
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".chromadb")
+        self.client = chromadb.PersistentClient(path=db_path)
 
     def get_collection_name(self, chat_id: str) -> str:
         return f"chroma_{chat_id.replace('-', '_')}"
 
-    def _embed(self, text: str) -> list:
-        text = text.lower()
-        vec = [text.count(chr(i)) for i in range(97, 123)]
-        total = sum(vec) or 1
-        return [v / total for v in vec]
-
-    def _cosine(self, a, b):
-        dot = sum(x*y for x,y in zip(a,b))
-        mag = math.sqrt(sum(x*x for x in a)) * math.sqrt(sum(y*y for y in b))
-        return dot / (mag + 1e-9)
-
     def index_chunks(self, chat_id: str, chunks: list[dict]) -> None:
         col_name = self.get_collection_name(chat_id)
-        self._store[col_name] = [
-            {**c, "vec": self._embed(c["chunk_text"])} for c in chunks
-        ]
+        collection = self.client.get_or_create_collection(
+            name=col_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        # Clean existing chunks in the collection if any
+        if collection.count() > 0:
+            existing = collection.get()
+            if existing and existing["ids"]:
+                collection.delete(ids=existing["ids"])
+        
+        texts = [c["chunk_text"] for c in chunks]
+        embeddings = get_sentence_embeddings(texts)
+        ids = [f"chunk_{c['chunk_index']}" for c in chunks]
+        metadatas = [{"page_number": c["page_number"], "chunk_index": c["chunk_index"]} for c in chunks]
+        
+        collection.add(
+            documents=texts,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
 
     def search(self, chat_id: str, query_text: str, top_k: int = 3) -> list[dict]:
         col_name = self.get_collection_name(chat_id)
-        if col_name not in self._store:
+        try:
+            collection = self.client.get_collection(name=col_name)
+        except Exception:
             return []
-        q_vec = self._embed(query_text)
-        scored = sorted(
-            self._store[col_name],
-            key=lambda c: self._cosine(q_vec, c["vec"]),
-            reverse=True
+            
+        q_emb = get_single_embedding(query_text)
+        results = collection.query(
+            query_embeddings=[q_emb],
+            n_results=top_k
         )
-        return [{"chunk_text": c["chunk_text"], "page_number": c["page_number"],
-                 "chunk_index": c["chunk_index"], "distance": 0.1} for c in scored[:top_k]]
+        
+        formatted = []
+        if results and results["documents"] and len(results["documents"][0]) > 0:
+            for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
+                formatted.append({
+                    "chunk_text": doc,
+                    "page_number": meta.get("page_number", 0),
+                    "chunk_index": meta.get("chunk_index", 0),
+                    "distance": dist
+                })
+        return formatted

@@ -13,6 +13,17 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pdf_helper import extract_pages, count_tokens, chunk_pages
 from vector_store import ChromaStore, qdrant_upsert_chunks, qdrant_search, get_sentence_embeddings
 from database import db_save_document
+from dotenv import load_dotenv
+
+# Load env variables
+load_dotenv()
+
+TOKEN_THRESHOLD = int(os.getenv("TOKEN_THRESHOLD", "20000"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
+MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "10"))
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 # ─────────────────────────────────────────────────────────────────
 # 1. Ingestion Graph Definition
@@ -46,7 +57,7 @@ def route_pipeline_node(state: IngestionState) -> Dict[str, Any]:
         token_count = count_tokens(full_text)
         q_url = os.getenv("QDRANT_URL", "")
         q_key = os.getenv("QDRANT_API_KEY", "")
-        if token_count <= 20000 or not q_url or not q_key:
+        if token_count <= TOKEN_THRESHOLD or not q_url or not q_key:
             pipeline_used = "direct"
         else:
             pipeline_used = "rag"
@@ -62,7 +73,7 @@ def index_chroma_node(state: IngestionState) -> Dict[str, Any]:
         return {}
     try:
         chroma_store = ChromaStore()
-        chunks = chunk_pages(state["pages"], chunk_size=4000, chunk_overlap=800)
+        chunks = chunk_pages(state["pages"], chunk_size=MAX_CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
         chroma_store.index_chunks(state["chat_id"], chunks)
         
         db_save_document(
@@ -82,7 +93,7 @@ def index_qdrant_node(state: IngestionState) -> Dict[str, Any]:
     if not state.get("success", True) or state.get("error"):
         return {}
     try:
-        chunks = chunk_pages(state["pages"], chunk_size=4000, chunk_overlap=800)
+        chunks = chunk_pages(state["pages"], chunk_size=MAX_CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
         chunk_texts = [c["chunk_text"] for c in chunks]
         embeddings = get_sentence_embeddings(chunk_texts)
         qdrant_col = qdrant_upsert_chunks(state["chat_id"], state["user_id"], state["filename"], chunks, embeddings)
@@ -152,7 +163,7 @@ def retrieve_context_node(state: QueryState) -> Dict[str, Any]:
     
     if doc_info["pipeline_used"] == "direct":
         chroma_store = ChromaStore()
-        results = chroma_store.search(chat_id, question, top_k=3)
+        results = chroma_store.search(chat_id, question, top_k=RAG_TOP_K)
         retrieved_chunks = results
         
         SIMILARITY_THRESHOLD = 2.0
@@ -161,7 +172,7 @@ def retrieve_context_node(state: QueryState) -> Dict[str, Any]:
     else:
         # Detect broad summary queries and increase top_k
         is_summary = any(w in question.lower() for w in ["summarize", "summary", "overview", "key sections"])
-        top_k = 10 if is_summary else 5
+        top_k = RAG_TOP_K * 2 if is_summary else RAG_TOP_K
         results = qdrant_search(doc_info["qdrant_collection"], question, top_k=top_k)
         retrieved_chunks = results
         
@@ -195,14 +206,14 @@ def generate_llm_response_node(state: QueryState) -> Dict[str, Any]:
         raise ValueError("GROQ_API_KEY is not defined in the environment variables.")
         
     llm = ChatGroq(
-        model="llama-3.1-8b-instant",
+        model=GROQ_MODEL,
         temperature=0.3,
         max_tokens=1024,
         api_key=api_key
     )
     
     langchain_history = []
-    for msg in history[-8:]:
+    for msg in history[-MAX_HISTORY_TURNS:]:
         if msg["role"] == "user":
             langchain_history.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant":

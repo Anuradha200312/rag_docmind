@@ -388,8 +388,9 @@ def render_main():
                         st.session_state.chroma_store.client.delete_collection(
                             st.session_state.chroma_store.get_collection_name(c["chat_id"])
                         )
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Chroma collection deletion skipped: {ex}")
                     
                     if st.session_state.active_chat_id == c["chat_id"]:
                         st.session_state.active_chat_id = None
@@ -447,6 +448,8 @@ def render_main():
                     st.success("✅ Document processed and chat session created!")
                     st.rerun()
                 except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Error uploading document: {e}", exc_info=True)
                     st.error(f"❌ Error uploading document: {e}")
 
         # Features Grid
@@ -601,6 +604,8 @@ def render_main():
                     st.success("✅ Document indexed and saved successfully!")
                     st.rerun()
                 except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Error uploading document: {e}", exc_info=True)
                     st.error(f"❌ Error uploading document: {e}")
         return
 
@@ -654,15 +659,24 @@ def render_main():
 
             # Create clean generator that handles LangChain chunk properties safely
             def response_generator():
-                for chunk in response_stream:
-                    if hasattr(chunk, "content"):
-                        yield chunk.content
-                    elif isinstance(chunk, str):
-                        yield chunk
-                    else:
-                        yield str(chunk)
+                try:
+                    for chunk in response_stream:
+                        if hasattr(chunk, "content"):
+                            yield chunk.content
+                        elif isinstance(chunk, str):
+                            yield chunk
+                        else:
+                            yield str(chunk)
+                except Exception as e:
+                    yield f"\n\n⚠️ *Streaming error encountered:* {str(e)}"
 
-            answer = st.write_stream(response_generator())
+            try:
+                answer = st.write_stream(response_generator())
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error rendering stream: {e}", exc_info=True)
+                st.error(f"❌ Error during response generation: {e}")
+                answer = "Sorry, I ran into an error generating a response. Please try again."
             
             t_assist = datetime.now().strftime("%I:%M %p")
             st.markdown(
